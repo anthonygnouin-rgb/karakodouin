@@ -10,7 +10,7 @@ from moviepy.editor import *
 from PIL import Image, ImageDraw, ImageFont
 
 # --- CONFIGURATION ---
-st.set_page_config(page_title="Karaoké V7 - Fusion", layout="centered")
+st.set_page_config(page_title="Karaoké V8 - Assisté", layout="centered")
 
 # --- MÉMOIRE ---
 if 'segments_data' not in st.session_state:
@@ -42,7 +42,7 @@ def create_karaoke_frame(current_text, next_text, w, h):
     img = Image.new('RGBA', (w, h), (255, 255, 255, 0))
     draw = ImageDraw.Draw(img)
     
-    # TEXTE PRINCIPAL (10% - JAUNE)
+    # PRINCIPAL (10%)
     font_size = int(h * 0.10)
     try:
         font = ImageFont.truetype("karaoke_font.ttf", font_size)
@@ -62,7 +62,7 @@ def create_karaoke_frame(current_text, next_text, w, h):
         draw.text((pos_x, curr_y), line, font=font, fill='#FFD700', stroke_width=5, stroke_fill='black')
         curr_y += line_height
 
-    # TEXTE SUIVANT (4% - BLANC)
+    # SUIVANT (4%)
     safe_next = clean_text(next_text)
     if safe_next:
         font_size_next = int(h * 0.04)
@@ -83,17 +83,25 @@ def create_karaoke_frame(current_text, next_text, w, h):
     return np.array(img)
 
 # --- INTERFACE ---
-st.title("🎤 KARAKODOUIN V7 - Fusion")
+st.title("🎤 KARAKODOUIN V8")
+st.write("L'IA utilise VOS paroles pour caler le rythme.")
 download_font()
 
-# 1. UPLOAD
-st.write("### 1. Fichiers")
-audio = st.file_uploader("Musique (MP3)", type=["mp3"], key="u_audio")
-bg = st.file_uploader("Fond (Image/Vidéo)", type=["jpg", "png", "mp4"], key="u_bg")
+# 1. FICHIERS + TEXTE GUIDE
+st.write("### 1. Configuration")
+col_files, col_text = st.columns([1, 1])
 
-# 2. ANALYSE DU RYTHME
-if st.button("1. Analyser le rythme 🎵") and audio and bg:
-    st.info("L'IA détecte le rythme (Timing)...")
+with col_files:
+    audio = st.file_uploader("Musique (MP3)", type=["mp3"], key="u_audio")
+    bg = st.file_uploader("Fond (Image/Vidéo)", type=["jpg", "png", "mp4"], key="u_bg")
+
+with col_text:
+    st.info("Collez vos paroles ici AVANT de lancer l'analyse 👇")
+    user_prompt_text = st.text_area("Paroles Officielles (Guide pour l'IA)", height=150, help="L'IA va essayer de reconnaître ces mots dans la chanson.")
+
+# 2. ANALYSE INTELLIGENTE
+if st.button("2. Analyser avec mes paroles 🎵") and audio and bg:
+    st.info("L'IA écoute la musique en lisant votre texte...")
     
     with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as f1:
         f1.write(audio.read())
@@ -106,8 +114,14 @@ if st.button("1. Analyser le rythme 🎵") and audio and bg:
         f2.write(bg.read())
         st.session_state['bg_path'] = f2.name
 
+    # Whisper avec PROMPT (L'astuce est ici)
     model = whisper.load_model("base")
-    result = model.transcribe(st.session_state['audio_path'])
+    
+    # On coupe le texte utilisateur pour ne pas dépasser la limite de l'IA (244 tokens)
+    # On prend les 200 premiers mots comme contexte initial, c'est souvent suffisant pour donner le ton
+    prompt_text = user_prompt_text[:1000] if user_prompt_text else None
+    
+    result = model.transcribe(st.session_state['audio_path'], initial_prompt=prompt_text)
     
     data = []
     for s in result["segments"]:
@@ -119,40 +133,18 @@ if st.button("1. Analyser le rythme 🎵") and audio and bg:
     st.session_state['segments_data'] = data
     st.rerun()
 
-# 3. ZONES DE PAROLES & TABLEAU
+# 3. TABLEAU DE VÉRIFICATION
 if len(st.session_state['segments_data']) > 0:
     st.write("---")
-    st.write("### 2. Paroles Officielles")
+    st.write("### 3. Vérification")
+    st.info("Vérifiez que le découpage vous convient avant de lancer la vidéo.")
     
-    col1, col2 = st.columns([1, 1])
-    
-    with col1:
-        st.info(f"L'IA a trouvé **{len(st.session_state['segments_data'])}** lignes de timing.")
-        raw_lyrics = st.text_area("Collez vos paroles ici (une phrase par ligne) :", height=300)
-        
-        if st.button("⚡ INJECTER LES PAROLES DANS LE TABLEAU"):
-            # Découpage du texte collé ligne par ligne
-            user_lines = [line for line in raw_lyrics.split('\n') if line.strip()]
-            
-            # On remplace dans le tableau
-            current_data = st.session_state['segments_data']
-            min_len = min(len(current_data), len(user_lines))
-            
-            for i in range(min_len):
-                current_data[i]["Paroles"] = clean_text(user_lines[i])
-            
-            st.session_state['segments_data'] = current_data
-            st.success(f"{min_len} lignes mises à jour !")
-            st.rerun()
-
-    with col2:
-        st.write("#### Tableau Final")
-        df = pd.DataFrame(st.session_state['segments_data'])
-        edited_df = st.data_editor(df, num_rows="dynamic", use_container_width=True, height=400, key="editor")
+    df = pd.DataFrame(st.session_state['segments_data'])
+    edited_df = st.data_editor(df, num_rows="dynamic", use_container_width=True, height=400, key="editor")
 
     # 4. GÉNÉRATION
     st.write("---")
-    if st.button("3. Créer la Vidéo Finale 🎬"):
+    if st.button("4. Créer la Vidéo Finale 🎬"):
         st.info("Génération de la vidéo...")
         try:
             audio_path = st.session_state['audio_path']
@@ -198,12 +190,14 @@ if len(st.session_state['segments_data']) > 0:
                 bar.progress((i + 1) / total)
 
             final = CompositeVideoClip([bg_c] + subs).set_audio(audio_c)
-            out = "karaoke_v7.mp4"
+            out = "karaoke_v8.mp4"
             final.write_videofile(out, fps=24, codec="libx264", audio_codec="aac", preset="ultrafast")
             
+            st.balloons()
             st.success("✅ Terminé !")
             with open(out, "rb") as f:
                 st.download_button("Télécharger", f, file_name="mon_karaoke.mp4")
 
         except Exception as e:
             st.error(f"Erreur : {e}")
+            
