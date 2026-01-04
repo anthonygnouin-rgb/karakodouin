@@ -18,7 +18,8 @@ def download_font():
         try:
             r = requests.get(url)
             with open("font.ttf", 'wb') as f: f.write(r.content)
-    except: pass
+        except: 
+            pass # Cette ligne est maintenant bien alignée !
 
 def create_karaoke_frame(text, w, h):
     # Création d'une image transparente
@@ -113,4 +114,3 @@ if st.button("Lancer la Vidéo 🎬") and audio and bg:
             
     except Exception as e:
         st.error(f"Erreur : {e}")
-                
