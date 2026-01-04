@@ -2,129 +2,115 @@ import streamlit as st
 import whisper
 import tempfile
 import os
+import requests
 import numpy as np
 from moviepy.editor import *
 from PIL import Image, ImageDraw, ImageFont
 
-# --- FONCTION DE SECOURS POUR ÉCRIRE LE TEXTE (Sans ImageMagick) ---
-def creer_image_texte(texte, fontsize, color, size):
+# --- CONFIGURATION ---
+st.set_page_config(page_title="Karaoké V3", layout="centered")
+
+# --- FONCTIONS ---
+def download_font():
+    # On télécharge une police "Gras" pour que ce soit lisible
+    url = "https://github.com/google/fonts/raw/main/apache/robotoslab/RobotoSlab-Bold.ttf"
+    if not os.path.exists("font.ttf"):
+        try:
+            r = requests.get(url)
+            with open("font.ttf", 'wb') as f: f.write(r.content)
+    except: pass
+
+def create_karaoke_frame(text, w, h):
     # Création d'une image transparente
-    img = Image.new('RGBA', size, (255, 255, 255, 0))
+    img = Image.new('RGBA', (w, h), (255, 255, 255, 0))
     draw = ImageDraw.Draw(img)
     
-    # Police par défaut
+    # Taille du texte : 6% de la hauteur de la vidéo (Gros)
+    fontsize = int(h * 0.06)
+    
     try:
-        # On essaie une police plus grande si possible
-        font = ImageFont.truetype("arial.ttf", fontsize)
-    except IOError:
+        font = ImageFont.truetype("font.ttf", fontsize)
+    except:
         font = ImageFont.load_default()
+
+    # Calcul pour centrer parfaitement
+    bbox = draw.textbbox((0, 0), text, font=font)
+    text_w = bbox[2] - bbox[0]
+    text_h = bbox[3] - bbox[1]
+    x = (w - text_w) / 2
+    y = (h - text_h) / 2
     
-    # Positionnement approximatif (bas de l'écran centré)
-    # On calcule la position pour que le texte soit en bas
-    text_position = (50, size[1] - 150) 
-    
-    draw.text(text_position, texte, font=font, fill=color)
+    # Texte Jaune avec Contour Noir (Lisible sur tout)
+    draw.text((x, y), text, font=font, fill='yellow', stroke_width=3, stroke_fill='black')
     return np.array(img)
 
-# --- CONFIGURATION DE LA PAGE ---
-st.set_page_config(page_title="Karakodouin V2", layout="centered")
-st.title("🎤 KARAKODOUIN - Mode Vidéo")
-
 # --- INTERFACE ---
-st.write("### 1. La Musique")
-audio_file = st.file_uploader("Chargez le MP3", type=["mp3"], key="audio_uploader")
+st.title("🎤 KARAKODOUIN V3")
+st.markdown("**1.** Attendez que la roue en haut à droite s'arrête.\n**2.** Si l'upload échoue, ne rafraichissez pas, réessayez juste le fichier.")
 
-st.write("### 2. Le Fond (Image OU Vidéo)")
-background_file = st.file_uploader("Chargez une Image (JPG/PNG) ou une Vidéo (MP4)", type=["jpg", "png", "jpeg", "mp4"], key="bg_uploader")
+download_font()
 
-# --- LOGIQUE ---
-if st.button("Lancer la création 🎬") and audio_file and background_file:
-    st.info("⏳ Analyse en cours... Ne touchez à rien.")
+# On utilise une clé unique pour forcer le nettoyage du cache d'upload
+audio = st.file_uploader("Musique (MP3)", type=["mp3"], key="mp3_load")
+bg = st.file_uploader("Fond (Image ou Vidéo)", type=["jpg", "png", "mp4"], key="bg_load")
+
+if st.button("Lancer la Vidéo 🎬") and audio and bg:
+    st.info("🚀 Analyse de l'audio en cours...")
     
-    # 1. Sauvegarde des fichiers temporaires
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as tmp_audio:
-        tmp_audio.write(audio_file.read())
-        audio_path = tmp_audio.name
-    
-    # On détecte si c'est une image ou une vidéo par l'extension du fichier uploadé
-    bg_is_video = background_file.name.lower().endswith(".mp4")
-    suffix_bg = ".mp4" if bg_is_video else ".png"
-    
-    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix_bg) as tmp_bg:
-        tmp_bg.write(background_file.read())
-        bg_path = tmp_bg.name
+    # Fichiers temporaires
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as f1:
+        f1.write(audio.read())
+        audio_path = f1.name
+        
+    is_video = bg.name.lower().endswith(".mp4")
+    ext = ".mp4" if is_video else ".png"
+    with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as f2:
+        f2.write(bg.read())
+        bg_path = f2.name
 
     try:
-        # 2. Transcription Whisper
+        # Whisper
         model = whisper.load_model("base")
         result = model.transcribe(audio_path)
         segments = result["segments"]
-        st.success("✅ Paroles détectées !")
-
-        # 3. Montage
-        st.info("🎬 Montage vidéo en cours...")
         
-        audio_clip = AudioFileClip(audio_path)
+        # Montage
+        st.info("🎨 Création des visuels...")
+        audio_c = AudioFileClip(audio_path)
         
-        if bg_is_video:
-            # Si c'est une vidéo
-            background_clip = VideoFileClip(bg_path)
-            # On coupe ou on boucle la vidéo pour qu'elle fasse la même durée que le son
-            if background_clip.duration < audio_clip.duration:
-                background_clip = background_clip.loop(duration=audio_clip.duration)
+        if is_video:
+            bg_c = VideoFileClip(bg_path)
+            # Boucle vidéo
+            if bg_c.duration < audio_c.duration:
+                bg_c = bg_c.loop(duration=audio_c.duration)
             else:
-                background_clip = background_clip.subclip(0, audio_clip.duration)
-            # On garde le son de la musique, pas de la vidéo de fond
-            background_clip = background_clip.set_audio(None)
+                bg_c = bg_c.subclip(0, audio_c.duration)
+            bg_c = bg_c.set_audio(None)
         else:
-            # Si c'est une image
-            background_clip = ImageClip(bg_path).set_duration(audio_clip.duration)
+            bg_c = ImageClip(bg_path).set_duration(audio_c.duration)
 
-        # IMPORTANT : On force une taille standard (ex: format carré ou vertical mobile)
-        # Sinon MoviePy plante si les tailles sont impaires
-        background_clip = background_clip.resize(height=720) # Hauteur standard
-        # On s'assure que la largeur est paire (bug fréquent x264)
-        w, h = background_clip.size
-        if w % 2 != 0:
-            background_clip = background_clip.resize(width=w-1)
-
-        subtitles = []
+        # Redimensionnement standard (Evite les bugs de taille)
+        bg_c = bg_c.resize(height=720)
+        if bg_c.w % 2 != 0: bg_c = bg_c.resize(width=bg_c.w-1)
         
-        # Création des sous-titres
-        for segment in segments:
-            start = segment["start"]
-            end = segment["end"]
-            text = segment["text"].strip()
+        subs = []
+        for s in segments:
+            img = create_karaoke_frame(s["text"].strip(), bg_c.w, bg_c.h)
+            clip = (ImageClip(img)
+                    .set_start(s["start"])
+                    .set_end(s["end"])
+                    .set_position('center'))
+            subs.append(clip)
             
-            # Utilisation de notre fonction Pillow
-            txt_img = creer_image_texte(text, 40, 'white', background_clip.size)
+        final = CompositeVideoClip([bg_c] + subs).set_audio(audio_c)
+        
+        out = "karaoke_final.mp4"
+        final.write_videofile(out, fps=24, codec="libx264", audio_codec="aac", preset="ultrafast")
+        
+        st.success("✅ Terminé !")
+        with open(out, "rb") as f:
+            st.download_button("Télécharger Vidéo", f, file_name="karaoke.mp4")
             
-            txt_clip = (ImageClip(txt_img)
-                        .set_start(start)
-                        .set_end(end)
-                        .set_position('center')
-                        .set_duration(end - start))
-            
-            subtitles.append(txt_clip)
-        
-        # Assemblage final
-        final_video = CompositeVideoClip([background_clip] + subtitles)
-        final_video = final_video.set_audio(audio_clip)
-        
-        output_filename = "karaoke_final.mp4"
-        # Preset ultrafast pour que ça ne plante pas sur mobile
-        final_video.write_videofile(output_filename, fps=24, codec="libx264", audio_codec="aac", preset="ultrafast")
-        
-        st.balloons()
-        st.success("✨ C'est prêt !")
-        
-        with open(output_filename, "rb") as file:
-            st.download_button("⬇️ TÉLÉCHARGER VIDÉO", file, file_name="mon_karaoke.mp4")
-
     except Exception as e:
-        st.error(f"Erreur technique : {e}")
-
-    # Nettoyage
-    if os.path.exists(audio_path): os.unlink(audio_path)
-    if os.path.exists(bg_path): os.unlink(bg_path)
-        
+        st.error(f"Erreur : {e}")
+                
