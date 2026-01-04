@@ -8,194 +8,123 @@ from PIL import Image, ImageDraw, ImageFont
 
 # --- FONCTION DE SECOURS POUR ÉCRIRE LE TEXTE (Sans ImageMagick) ---
 def creer_image_texte(texte, fontsize, color, size):
-    # Création d'une image transparente avec Pillow
+    # Création d'une image transparente
     img = Image.new('RGBA', size, (255, 255, 255, 0))
     draw = ImageDraw.Draw(img)
     
-    # Tentative de charger une police par défaut, sinon police simple
+    # Police par défaut
     try:
+        # On essaie une police plus grande si possible
         font = ImageFont.truetype("arial.ttf", fontsize)
     except IOError:
         font = ImageFont.load_default()
     
-    # Calcul pour centrer le texte (méthode approximative compatible)
-    # On dessine le texte au centre de l'image
-    # Note: Sur mobile/serveur linux, le centrage parfait est complexe sans police externe
-    # On positionne le texte un peu en bas
-    text_position = (50, size[1] - fontsize - 50) 
+    # Positionnement approximatif (bas de l'écran centré)
+    # On calcule la position pour que le texte soit en bas
+    text_position = (50, size[1] - 150) 
     
     draw.text(text_position, texte, font=font, fill=color)
-    
-    # Conversion en format compréhensible par MoviePy
     return np.array(img)
 
-# --- APPLICATION PRINCIPALE ---
-st.title("🎤 KARAKODOUIN - Version Finale")
+# --- CONFIGURATION DE LA PAGE ---
+st.set_page_config(page_title="Karakodouin V2", layout="centered")
+st.title("🎤 KARAKODOUIN - Mode Vidéo")
 
-# 1. Chargement du MP3
-audio_file = st.file_uploader("1. Choisissez votre musique (MP3)", type=["mp3"])
+# --- INTERFACE ---
+st.write("### 1. La Musique")
+audio_file = st.file_uploader("Chargez le MP3", type=["mp3"], key="audio_uploader")
 
-# 2. Chargement du fond
-image_file = st.file_uploader("2. Choisissez l'image de fond", type=["jpg", "png", "jpeg"])
+st.write("### 2. Le Fond (Image OU Vidéo)")
+background_file = st.file_uploader("Chargez une Image (JPG/PNG) ou une Vidéo (MP4)", type=["jpg", "png", "jpeg", "mp4"], key="bg_uploader")
 
-if st.button("Lancer la création 🎬") and audio_file and image_file:
-    st.info("👂 L'IA écoute la chanson (cela peut prendre 1 à 2 minutes)...")
+# --- LOGIQUE ---
+if st.button("Lancer la création 🎬") and audio_file and background_file:
+    st.info("⏳ Analyse en cours... Ne touchez à rien.")
     
-    # Sauvegarde temporaire des fichiers
+    # 1. Sauvegarde des fichiers temporaires
     with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as tmp_audio:
         tmp_audio.write(audio_file.read())
         audio_path = tmp_audio.name
-        
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as tmp_image:
-        tmp_image.write(image_file.read())
-        image_path = tmp_image.name
+    
+    # On détecte si c'est une image ou une vidéo par l'extension du fichier uploadé
+    bg_is_video = background_file.name.lower().endswith(".mp4")
+    suffix_bg = ".mp4" if bg_is_video else ".png"
+    
+    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix_bg) as tmp_bg:
+        tmp_bg.write(background_file.read())
+        bg_path = tmp_bg.name
 
     try:
-        # A. Transcription avec Whisper
+        # 2. Transcription Whisper
         model = whisper.load_model("base")
         result = model.transcribe(audio_path)
         segments = result["segments"]
-        st.success("✅ Paroles trouvées !")
+        st.success("✅ Paroles détectées !")
 
-        # B. Création de la vidéo
-        st.info("🎬 Montage de la vidéo (Technique 'Pillow' activée)...")
+        # 3. Montage
+        st.info("🎬 Montage vidéo en cours...")
         
-        # Préparation de l'audio
         audio_clip = AudioFileClip(audio_path)
         
-        # Préparation du fond
-        background_clip = ImageClip(image_path).set_duration(audio_clip.duration)
-        
-        # Si l'image est trop petite, on la redimensionne (ex: format HD)
+        if bg_is_video:
+            # Si c'est une vidéo
+            background_clip = VideoFileClip(bg_path)
+            # On coupe ou on boucle la vidéo pour qu'elle fasse la même durée que le son
+            if background_clip.duration < audio_clip.duration:
+                background_clip = background_clip.loop(duration=audio_clip.duration)
+            else:
+                background_clip = background_clip.subclip(0, audio_clip.duration)
+            # On garde le son de la musique, pas de la vidéo de fond
+            background_clip = background_clip.set_audio(None)
+        else:
+            # Si c'est une image
+            background_clip = ImageClip(bg_path).set_duration(audio_clip.duration)
+
+        # IMPORTANT : On force une taille standard (ex: format carré ou vertical mobile)
+        # Sinon MoviePy plante si les tailles sont impaires
+        background_clip = background_clip.resize(height=720) # Hauteur standard
+        # On s'assure que la largeur est paire (bug fréquent x264)
         w, h = background_clip.size
-        # On s'assure d'avoir une taille standard si besoin, sinon on garde l'original
-        
+        if w % 2 != 0:
+            background_clip = background_clip.resize(width=w-1)
+
         subtitles = []
         
+        # Création des sous-titres
         for segment in segments:
-            start_time = segment["start"]
-            end_time = segment["end"]
+            start = segment["start"]
+            end = segment["end"]
             text = segment["text"].strip()
             
-            # Utilisation de la méthode manuelle (Pillow) au lieu de TextClip
-            # On crée une image transparente avec le texte dessus
-            txt_img_array = creer_image_texte(text, fontsize=50, color='white', size=background_clip.size)
+            # Utilisation de notre fonction Pillow
+            txt_img = creer_image_texte(text, 40, 'white', background_clip.size)
             
-            txt_clip = (ImageClip(txt_img_array)
-                        .set_start(start_time)
-                        .set_end(end_time)
+            txt_clip = (ImageClip(txt_img)
+                        .set_start(start)
+                        .set_end(end)
                         .set_position('center')
-                        .set_duration(end_time - start_time))
+                        .set_duration(end - start))
             
             subtitles.append(txt_clip)
         
-        # Superposition finale
+        # Assemblage final
         final_video = CompositeVideoClip([background_clip] + subtitles)
         final_video = final_video.set_audio(audio_clip)
         
-        # Exportation
         output_filename = "karaoke_final.mp4"
-        final_video.write_videofile(output_filename, fps=24, codec="libx264", audio_codec="aac")
+        # Preset ultrafast pour que ça ne plante pas sur mobile
+        final_video.write_videofile(output_filename, fps=24, codec="libx264", audio_codec="aac", preset="ultrafast")
         
         st.balloons()
-        st.success("✨ Vidéo terminée !")
+        st.success("✨ C'est prêt !")
         
         with open(output_filename, "rb") as file:
-            st.download_button("⬇️ TÉLÉCHARGER MA VIDÉO", file, file_name="mon_karaoke.mp4")
+            st.download_button("⬇️ TÉLÉCHARGER VIDÉO", file, file_name="mon_karaoke.mp4")
 
     except Exception as e:
-        st.error(f"Une erreur est survenue : {e}")
-def creer_karaoke(audio_file, fond_file, format_v):
-    # 1. Sauvegarde temporaire des fichiers sur le serveur
-    tfile_audio = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3")
-    tfile_audio.write(audio_file.read())
-    path_audio = tfile_audio.name
+        st.error(f"Erreur technique : {e}")
 
-    tfile_fond = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4" if fond_file.name.endswith(".mp4") else ".jpg")
-    tfile_fond.write(fond_file.read())
-    path_fond = tfile_fond.name
-
-    # 2. L'IA écoute (Transcription)
-    status.text("👂 L'IA écoute la chanson pour caler le rythme...")
-    resultat = model.transcribe(path_audio)
-    segments = resultat["segments"] # Liste des phrases avec leur timing précis
-
-    # 3. Préparation du montage vidéo
-    status.text("🎬 Montage de la vidéo en cours...")
-    
-    # Chargement de l'audio
-    audio_clip = mp.AudioFileClip(path_audio)
-    duree = audio_clip.duration
-
-    # Création du fond (Background)
-    if path_fond.endswith(".mp4"):
-        fond_clip = mp.VideoFileClip(path_fond)
-        # On boucle la vidéo de fond si elle est trop courte
-        fond_clip = fond_clip.loop(duration=duree)
-        # On coupe le son de la vidéo de fond pour garder la musique
-        fond_clip = fond_clip.without_audio()
-    else:
-        # C'est une image
-        fond_clip = mp.ImageClip(path_fond).set_duration(duree)
-
-    # Redimensionnement selon le format choisi
-    if "Portrait" in format_v:
-        w, h = 1080, 1920
-        # On coupe le fond pour qu'il remplisse l'écran vertical
-        fond_clip = fond_clip.resize(height=1920) 
-        fond_clip = fond_clip.crop(x1=fond_clip.w/2 - 540, width=1080, height=1920)
-    else:
-        w, h = 1920, 1080
-        fond_clip = fond_clip.resize(width=1920)
-
-    # 4. Création des paroles (Texte par dessus)
-    clips_textes = []
-    
-    for segment in segments:
-        texte = segment["text"].strip()
-        start = segment["start"]
-        end = segment["end"]
-        
-        # Création du clip texte
-        txt_clip = (mp.TextClip(texte, fontsize=70, color='white', font='Arial-Bold', stroke_color='black', stroke_width=2, size=(w-100, None), method='caption')
-                    .set_position(('center', 'center'))
-                    .set_start(start)
-                    .set_end(end))
-        clips_textes.append(txt_clip)
-
-    # Assemblage final (Fond + Textes)
-    video_finale = mp.CompositeVideoClip([fond_clip] + clips_textes)
-    video_finale = video_finale.set_audio(audio_clip)
-
-    # Exportation
-    output_path = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4").name
-    # Note : On utilise un preset rapide pour ne pas faire attendre trop longtemps
-    video_finale.write_videofile(output_path, codec="libx264", audio_codec="aac", fps=24, preset="ultrafast")
-    
-    return output_path
-
-# --- LE BOUTON D'ACTION ---
-if st.button("Lancer la création (Cela peut prendre quelques minutes)"):
-    if fichier_audio and fichier_fond:
-        status = st.empty() # Zone pour afficher l'avancement
-        with st.spinner('Les robots travaillent... 🤖'):
-            try:
-                chemin_video = creer_karaoke(fichier_audio, fichier_fond, format_video)
-                
-                st.success("✅ Vidéo terminée !")
-                
-                # Lecture de la vidéo générée pour le téléchargement
-                with open(chemin_video, "rb") as file:
-                    video_bytes = file.read()
-                    
-                st.download_button(
-                    label="📥 Télécharger ma vidéo KARAKODOUIN",
-                    data=video_bytes,
-                    file_name="mon_karaoke.mp4",
-                    mime="video/mp4"
-                )
-            except Exception as e:
-                st.error(f"Une erreur est survenue : {e}")
-    else:
-        st.warning("Il manque le fichier MP3 ou le fond !")
+    # Nettoyage
+    if os.path.exists(audio_path): os.unlink(audio_path)
+    if os.path.exists(bg_path): os.unlink(bg_path)
         
