@@ -1,39 +1,110 @@
 import streamlit as st
+import whisper
 import tempfile
 import os
-import whisper
-import moviepy.editor as mp
-from moviepy.config import change_settings
+import numpy as np
+from moviepy.editor import *
+from PIL import Image, ImageDraw, ImageFont
 
-# Configuration pour que MoviePy trouve ImageMagick sur le serveur
-change_settings({"IMAGEMAGICK_BINARY": "/usr/bin/convert"})
+# --- FONCTION DE SECOURS POUR ÉCRIRE LE TEXTE (Sans ImageMagick) ---
+def creer_image_texte(texte, fontsize, color, size):
+    # Création d'une image transparente avec Pillow
+    img = Image.new('RGBA', size, (255, 255, 255, 0))
+    draw = ImageDraw.Draw(img)
+    
+    # Tentative de charger une police par défaut, sinon police simple
+    try:
+        font = ImageFont.truetype("arial.ttf", fontsize)
+    except IOError:
+        font = ImageFont.load_default()
+    
+    # Calcul pour centrer le texte (méthode approximative compatible)
+    # On dessine le texte au centre de l'image
+    # Note: Sur mobile/serveur linux, le centrage parfait est complexe sans police externe
+    # On positionne le texte un peu en bas
+    text_position = (50, size[1] - fontsize - 50) 
+    
+    draw.text(text_position, texte, font=font, fill=color)
+    
+    # Conversion en format compréhensible par MoviePy
+    return np.array(img)
 
-st.title("🎤 KARAKODOUIN")
-st.write("Le générateur de Karaoké par Intelligence Artificielle")
+# --- APPLICATION PRINCIPALE ---
+st.title("🎤 KARAKODOUIN - Version Finale")
 
-# --- CHARGEMENT DU CERVEAU (IA) ---
-# On met l'IA en mémoire cache pour ne pas la recharger à chaque fois (ça gagne du temps)
-@st.cache_resource
-def charger_ia():
-    return whisper.load_model("base")
+# 1. Chargement du MP3
+audio_file = st.file_uploader("1. Choisissez votre musique (MP3)", type=["mp3"])
 
-model = charger_ia()
+# 2. Chargement du fond
+image_file = st.file_uploader("2. Choisissez l'image de fond", type=["jpg", "png", "jpeg"])
 
-# --- INTERFACE ---
-st.info("💡 Astuce : L'IA va écouter votre musique et écrire les paroles elle-même pour être parfaitement calée !")
+if st.button("Lancer la création 🎬") and audio_file and image_file:
+    st.info("👂 L'IA écoute la chanson (cela peut prendre 1 à 2 minutes)...")
+    
+    # Sauvegarde temporaire des fichiers
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as tmp_audio:
+        tmp_audio.write(audio_file.read())
+        audio_path = tmp_audio.name
+        
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as tmp_image:
+        tmp_image.write(image_file.read())
+        image_path = tmp_image.name
 
-col1, col2 = st.columns(2)
-with col1:
-    fichier_audio = st.file_uploader("1. Votre fichier MP3", type=["mp3"])
-with col2:
-    fichier_fond = st.file_uploader("2. Image ou Vidéo de fond", type=["jpg", "png", "mp4"])
+    try:
+        # A. Transcription avec Whisper
+        model = whisper.load_model("base")
+        result = model.transcribe(audio_path)
+        segments = result["segments"]
+        st.success("✅ Paroles trouvées !")
 
-format_video = st.radio(
-    "3. Format de la vidéo :",
-    ["Portrait (TikTok/Reels - 9:16)", "Paysage (YouTube - 16:9)"]
-)
+        # B. Création de la vidéo
+        st.info("🎬 Montage de la vidéo (Technique 'Pillow' activée)...")
+        
+        # Préparation de l'audio
+        audio_clip = AudioFileClip(audio_path)
+        
+        # Préparation du fond
+        background_clip = ImageClip(image_path).set_duration(audio_clip.duration)
+        
+        # Si l'image est trop petite, on la redimensionne (ex: format HD)
+        w, h = background_clip.size
+        # On s'assure d'avoir une taille standard si besoin, sinon on garde l'original
+        
+        subtitles = []
+        
+        for segment in segments:
+            start_time = segment["start"]
+            end_time = segment["end"]
+            text = segment["text"].strip()
+            
+            # Utilisation de la méthode manuelle (Pillow) au lieu de TextClip
+            # On crée une image transparente avec le texte dessus
+            txt_img_array = creer_image_texte(text, fontsize=50, color='white', size=background_clip.size)
+            
+            txt_clip = (ImageClip(txt_img_array)
+                        .set_start(start_time)
+                        .set_end(end_time)
+                        .set_position('center')
+                        .set_duration(end_time - start_time))
+            
+            subtitles.append(txt_clip)
+        
+        # Superposition finale
+        final_video = CompositeVideoClip([background_clip] + subtitles)
+        final_video = final_video.set_audio(audio_clip)
+        
+        # Exportation
+        output_filename = "karaoke_final.mp4"
+        final_video.write_videofile(output_filename, fps=24, codec="libx264", audio_codec="aac")
+        
+        st.balloons()
+        st.success("✨ Vidéo terminée !")
+        
+        with open(output_filename, "rb") as file:
+            st.download_button("⬇️ TÉLÉCHARGER MA VIDÉO", file, file_name="mon_karaoke.mp4")
 
-# --- LA FONCTION MAGIQUE ---
+    except Exception as e:
+        st.error(f"Une erreur est survenue : {e}")
 def creer_karaoke(audio_file, fond_file, format_v):
     # 1. Sauvegarde temporaire des fichiers sur le serveur
     tfile_audio = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3")
