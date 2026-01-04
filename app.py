@@ -9,9 +9,9 @@ from moviepy.editor import *
 from PIL import Image, ImageDraw, ImageFont
 
 # --- CONFIGURATION ---
-st.set_page_config(page_title="Karaoké XXL", layout="centered")
+st.set_page_config(page_title="Karaoké V5 Pro", layout="centered")
 
-# --- 1. FONCTIONS ---
+# --- 1. POLICE ---
 def download_font():
     url = "https://github.com/google/fonts/raw/main/ofl/anton/Anton-Regular.ttf"
     if not os.path.exists("karaoke_font.ttf"):
@@ -21,58 +21,86 @@ def download_font():
         except: 
             pass 
 
+# --- 2. ANTI-CRASH (Nettoyage) ---
 def clean_text(text):
     try:
+        # Garde uniquement les caractères latins (enlève ♪, ♫, emojis)
         return text.encode('latin-1', 'ignore').decode('latin-1').strip()
     except:
         return ""
 
-def create_karaoke_frame(text, w, h):
+# --- 3. DESSIN (Actuel + Suivant) ---
+def create_karaoke_frame(current_text, next_text, w, h):
     img = Image.new('RGBA', (w, h), (255, 255, 255, 0))
     draw = ImageDraw.Draw(img)
     
-    # TAILLE XXL : 30% de la hauteur
-    fontsize = int(h * 0.30) 
-    
+    # --- A. TEXTE PRINCIPAL (10% - JAUNE) ---
+    font_size_main = int(h * 0.10)
     try:
-        font = ImageFont.truetype("karaoke_font.ttf", fontsize)
+        font_main = ImageFont.truetype("karaoke_font.ttf", font_size_main)
     except:
-        font = ImageFont.load_default()
+        font_main = ImageFont.load_default()
 
-    # On coupe le texte court (10 caractères max par ligne)
-    lines = textwrap.wrap(text, width=10)
+    # Découpage (Wrapping) pour que ça tienne
+    lines_main = textwrap.wrap(current_text, width=20)
     
-    line_height = fontsize * 1.1
-    total_height = len(lines) * line_height
-    current_y = (h - total_height) / 2
+    # Calcul de la hauteur du bloc principal
+    line_height_main = font_size_main * 1.2
+    total_height_main = len(lines_main) * line_height_main
     
-    for line in lines:
-        bbox = draw.textbbox((0, 0), line, font=font)
+    # On place le texte principal un peu au-dessus du centre
+    start_y_main = (h - total_height_main) / 2 - (h * 0.05)
+    
+    current_y = start_y_main
+    for line in lines_main:
+        bbox = draw.textbbox((0, 0), line, font=font_main)
         text_w = bbox[2] - bbox[0]
-        current_x = (w - text_w) / 2
+        pos_x = (w - text_w) / 2
         
-        # Dessin avec contour (code coupé pour faciliter la copie)
-        draw.text((current_x, current_y), line, font=font, 
-                  fill='#FFD700', stroke_width=8, stroke_fill='black')
+        # Jaune avec contour Noir
+        draw.text((pos_x, current_y), line, font=font_main, 
+                  fill='#FFD700', stroke_width=5, stroke_fill='black')
+        current_y += line_height_main
+
+    # --- B. TEXTE SUIVANT (4% - BLANC) ---
+    if next_text:
+        font_size_next = int(h * 0.04)
+        try:
+            font_next = ImageFont.truetype("karaoke_font.ttf", font_size_next)
+        except:
+            font_next = ImageFont.load_default()
+            
+        # On prépare le texte suivant (on met "..." au début)
+        next_text_display = f"... {next_text} ..."
+        lines_next = textwrap.wrap(next_text_display, width=40)
         
-        current_y += line_height
+        # On le place un peu plus bas
+        start_y_next = current_y + (h * 0.05)
+        
+        for line in lines_next:
+            bbox = draw.textbbox((0, 0), line, font=font_next)
+            text_w = bbox[2] - bbox[0]
+            pos_x = (w - text_w) / 2
+            
+            # Blanc (ou Gris clair) avec petit contour
+            draw.text((pos_x, start_y_next), line, font=font_next, 
+                      fill='#E0E0E0', stroke_width=2, stroke_fill='black')
+            start_y_next += (font_size_next * 1.2)
         
     return np.array(img)
 
-# --- 2. INTERFACE ---
-st.title("🎤 KARAKODOUIN XXL")
-st.markdown("ℹ️ *Texte géant (30%) - Parfait pour lire de loin.*")
+# --- INTERFACE ---
+st.title("🎤 KARAKODOUIN V5 - Pro")
+st.markdown("ℹ️ *Affiche les paroles (10%) et la phrase suivante.*")
 
 download_font()
 
-# Uploaders
-audio = st.file_uploader("1. Musique", type=["mp3"], key="mp3_xxl")
-bg = st.file_uploader("2. Fond", type=["jpg", "png", "mp4"], key="bg_xxl")
+audio = st.file_uploader("1. Musique", type=["mp3"], key="mp3_v5")
+bg = st.file_uploader("2. Fond", type=["jpg", "png", "mp4"], key="bg_v5")
 
 if st.button("Lancer la Vidéo 🎬") and audio and bg:
-    st.info("🚀 Analyse en cours...")
+    st.info("🚀 Analyse et prédiction des paroles...")
     
-    # C'EST ICI QUE L'ERREUR ÉTAIT (J'ai mis f1 et f2)
     with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as f1:
         f1.write(audio.read())
         audio_path = f1.name
@@ -85,13 +113,11 @@ if st.button("Lancer la Vidéo 🎬") and audio and bg:
         bg_path = f2.name
 
     try:
-        # Whisper
         model = whisper.load_model("base")
         result = model.transcribe(audio_path)
         segments = result["segments"]
         
-        # Montage
-        st.info("🎨 Création visuelle...")
+        st.info("🎨 Montage (Patience, c'est précis)...")
         audio_c = AudioFileClip(audio_path)
         
         if is_video:
@@ -109,27 +135,40 @@ if st.button("Lancer la Vidéo 🎬") and audio and bg:
         
         subs = []
         bar = st.progress(0)
+        total = len(segments)
         
-        for i, s in enumerate(segments):
-            safe_text = clean_text(s["text"])
-            if safe_text:
-                img = create_karaoke_frame(safe_text, bg_c.w, bg_c.h)
+        for i in range(total):
+            # 1. Texte Actuel
+            current_seg = segments[i]
+            txt_now = clean_text(current_seg["text"])
+            
+            # 2. Texte Suivant (Prédiction)
+            txt_next = ""
+            if i + 1 < total: # S'il y a une phrase après
+                txt_next = clean_text(segments[i+1]["text"])
+            
+            if txt_now:
+                # On envoie les DEUX textes à la fonction de dessin
+                img = create_karaoke_frame(txt_now, txt_next, bg_c.w, bg_c.h)
+                
                 clip = (ImageClip(img)
-                        .set_start(s["start"])
-                        .set_end(s["end"])
+                        .set_start(current_seg["start"])
+                        .set_end(current_seg["end"])
                         .set_position('center'))
                 subs.append(clip)
-            bar.progress((i + 1) / len(segments))
+            
+            bar.progress((i + 1) / total)
             
         final = CompositeVideoClip([bg_c] + subs).set_audio(audio_c)
         
-        out = "karaoke_xxl.mp4"
+        out = "karaoke_pro.mp4"
         final.write_videofile(out, fps=24, codec="libx264", 
                               audio_codec="aac", preset="ultrafast")
         
         st.success("✅ Terminé !")
         with open(out, "rb") as f:
-            st.download_button("Télécharger", f, file_name="karaoke_xxl.mp4")
+            st.download_button("Télécharger", f, file_name="karaoke_pro.mp4")
             
     except Exception as e:
         st.error(f"Erreur : {e}")
+                
