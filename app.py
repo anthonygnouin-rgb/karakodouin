@@ -10,9 +10,9 @@ from moviepy.editor import *
 from PIL import Image, ImageDraw, ImageFont
 
 # --- CONFIGURATION ---
-st.set_page_config(page_title="Karaoké V6.1", layout="centered")
+st.set_page_config(page_title="Karaoké V7 - Fusion", layout="centered")
 
-# --- INITIALISATION MÉMOIRE ---
+# --- MÉMOIRE ---
 if 'segments_data' not in st.session_state:
     st.session_state['segments_data'] = []
 if 'audio_path' not in st.session_state:
@@ -32,7 +32,6 @@ def download_font():
         except: pass 
 
 def clean_text(text):
-    # Protection Anti-Crash (Emojis / Notes de musique)
     try:
         if not isinstance(text, str): return str(text)
         return text.encode('latin-1', 'ignore').decode('latin-1').strip()
@@ -43,22 +42,19 @@ def create_karaoke_frame(current_text, next_text, w, h):
     img = Image.new('RGBA', (w, h), (255, 255, 255, 0))
     draw = ImageDraw.Draw(img)
     
-    # 1. Texte Principal (10% hauteur)
+    # TEXTE PRINCIPAL (10% - JAUNE)
     font_size = int(h * 0.10)
     try:
         font = ImageFont.truetype("karaoke_font.ttf", font_size)
     except:
         font = ImageFont.load_default()
 
-    # Nettoyage avant affichage
     safe_current = clean_text(current_text)
-    
     lines = textwrap.wrap(safe_current, width=20)
     line_height = font_size * 1.2
     total_height = len(lines) * line_height
-    start_y = (h - total_height) / 2 - (h * 0.05)
+    curr_y = (h - total_height) / 2 - (h * 0.05)
     
-    curr_y = start_y
     for line in lines:
         bbox = draw.textbbox((0, 0), line, font=font)
         text_w = bbox[2] - bbox[0]
@@ -66,7 +62,7 @@ def create_karaoke_frame(current_text, next_text, w, h):
         draw.text((pos_x, curr_y), line, font=font, fill='#FFD700', stroke_width=5, stroke_fill='black')
         curr_y += line_height
 
-    # 2. Texte Suivant (4% hauteur)
+    # TEXTE SUIVANT (4% - BLANC)
     safe_next = clean_text(next_text)
     if safe_next:
         font_size_next = int(h * 0.04)
@@ -77,7 +73,6 @@ def create_karaoke_frame(current_text, next_text, w, h):
             
         next_lines = textwrap.wrap(f"... {safe_next} ...", width=40)
         next_y = curr_y + (h * 0.05)
-        
         for line in next_lines:
             bbox = draw.textbbox((0, 0), line, font=font_next)
             text_w = bbox[2] - bbox[0]
@@ -88,18 +83,17 @@ def create_karaoke_frame(current_text, next_text, w, h):
     return np.array(img)
 
 # --- INTERFACE ---
-st.title("🎤 KARAKODOUIN V6.1")
-st.write("Mode : Rythme automatique + Correction manuelle")
+st.title("🎤 KARAKODOUIN V7 - Fusion")
 download_font()
 
-# ÉTAPE 1 : UPLOAD
+# 1. UPLOAD
 st.write("### 1. Fichiers")
 audio = st.file_uploader("Musique (MP3)", type=["mp3"], key="u_audio")
 bg = st.file_uploader("Fond (Image/Vidéo)", type=["jpg", "png", "mp4"], key="u_bg")
 
-# ÉTAPE 2 : ANALYSE
+# 2. ANALYSE DU RYTHME
 if st.button("1. Analyser le rythme 🎵") and audio and bg:
-    st.info("L'IA écoute la musique...")
+    st.info("L'IA détecte le rythme (Timing)...")
     
     with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as f1:
         f1.write(audio.read())
@@ -112,7 +106,6 @@ if st.button("1. Analyser le rythme 🎵") and audio and bg:
         f2.write(bg.read())
         st.session_state['bg_path'] = f2.name
 
-    # Whisper
     model = whisper.load_model("base")
     result = model.transcribe(st.session_state['audio_path'])
     
@@ -121,31 +114,46 @@ if st.button("1. Analyser le rythme 🎵") and audio and bg:
         data.append({
             "Début (s)": round(s["start"], 2),
             "Fin (s)": round(s["end"], 2),
-            "Paroles (Modifiable)": clean_text(s["text"])
+            "Paroles": clean_text(s["text"])
         })
     st.session_state['segments_data'] = data
-    st.rerun() # <--- C'EST ICI QUE J'AI CORRIGÉ L'ERREUR
+    st.rerun()
 
-# ÉTAPE 3 : ÉDITION
+# 3. ZONES DE PAROLES & TABLEAU
 if len(st.session_state['segments_data']) > 0:
     st.write("---")
-    st.write("### 2. Corrigez les paroles")
-    st.info("Cliquez sur le texte dans la colonne de droite pour le modifier.")
+    st.write("### 2. Paroles Officielles")
     
-    df = pd.DataFrame(st.session_state['segments_data'])
-    edited_df = st.data_editor(
-        df, 
-        num_rows="dynamic", 
-        use_container_width=True,
-        height=400,
-        key="editor"
-    )
-
-    # ÉTAPE 4 : GÉNÉRATION
-    st.write("---")
-    if st.button("2. Générer la Vidéo 🎬"):
-        st.info("Création en cours...")
+    col1, col2 = st.columns([1, 1])
+    
+    with col1:
+        st.info(f"L'IA a trouvé **{len(st.session_state['segments_data'])}** lignes de timing.")
+        raw_lyrics = st.text_area("Collez vos paroles ici (une phrase par ligne) :", height=300)
         
+        if st.button("⚡ INJECTER LES PAROLES DANS LE TABLEAU"):
+            # Découpage du texte collé ligne par ligne
+            user_lines = [line for line in raw_lyrics.split('\n') if line.strip()]
+            
+            # On remplace dans le tableau
+            current_data = st.session_state['segments_data']
+            min_len = min(len(current_data), len(user_lines))
+            
+            for i in range(min_len):
+                current_data[i]["Paroles"] = clean_text(user_lines[i])
+            
+            st.session_state['segments_data'] = current_data
+            st.success(f"{min_len} lignes mises à jour !")
+            st.rerun()
+
+    with col2:
+        st.write("#### Tableau Final")
+        df = pd.DataFrame(st.session_state['segments_data'])
+        edited_df = st.data_editor(df, num_rows="dynamic", use_container_width=True, height=400, key="editor")
+
+    # 4. GÉNÉRATION
+    st.write("---")
+    if st.button("3. Créer la Vidéo Finale 🎬"):
+        st.info("Génération de la vidéo...")
         try:
             audio_path = st.session_state['audio_path']
             bg_path = st.session_state['bg_path']
@@ -171,13 +179,13 @@ if len(st.session_state['segments_data']) > 0:
             
             for i in range(total):
                 row = final_segments[i]
-                txt_now = row["Paroles (Modifiable)"]
+                txt_now = row["Paroles"]
                 start = row["Début (s)"]
                 end = row["Fin (s)"]
                 
                 txt_next = ""
                 if i + 1 < total:
-                    txt_next = final_segments[i+1]["Paroles (Modifiable)"]
+                    txt_next = final_segments[i+1]["Paroles"]
                 
                 if txt_now:
                     img = create_karaoke_frame(txt_now, txt_next, bg_c.w, bg_c.h)
@@ -190,7 +198,7 @@ if len(st.session_state['segments_data']) > 0:
                 bar.progress((i + 1) / total)
 
             final = CompositeVideoClip([bg_c] + subs).set_audio(audio_c)
-            out = "karaoke_final_v6.mp4"
+            out = "karaoke_v7.mp4"
             final.write_videofile(out, fps=24, codec="libx264", audio_codec="aac", preset="ultrafast")
             
             st.success("✅ Terminé !")
@@ -199,4 +207,3 @@ if len(st.session_state['segments_data']) > 0:
 
         except Exception as e:
             st.error(f"Erreur : {e}")
-        
