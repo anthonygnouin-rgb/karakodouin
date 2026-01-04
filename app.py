@@ -8,7 +8,7 @@ from moviepy.editor import *
 from PIL import Image, ImageDraw, ImageFont
 
 # --- CONFIGURATION ---
-st.set_page_config(page_title="Karaoké V3", layout="centered")
+st.set_page_config(page_title="Karaoké V3.2", layout="centered")
 
 # --- FONCTIONS ---
 def download_font():
@@ -19,7 +19,16 @@ def download_font():
             r = requests.get(url)
             with open("font.ttf", 'wb') as f: f.write(r.content)
         except: 
-            pass # Cette ligne est maintenant bien alignée !
+            pass 
+
+def clean_text(text):
+    # C'est ICI que la magie opère.
+    # On force le texte à rester dans les caractères standards (Latin-1).
+    # Ça supprime les notes de musique ♪ ♫ et les emojis qui font planter le serveur.
+    try:
+        return text.encode('latin-1', 'ignore').decode('latin-1').strip()
+    except:
+        return "" # Si ça plante vraiment, on renvoie du vide pour ne pas crasher
 
 def create_karaoke_frame(text, w, h):
     # Création d'une image transparente
@@ -46,14 +55,14 @@ def create_karaoke_frame(text, w, h):
     return np.array(img)
 
 # --- INTERFACE ---
-st.title("🎤 KARAKODOUIN V3")
-st.markdown("**1.** Attendez que la roue en haut à droite s'arrête.\n**2.** Si l'upload échoue, ne rafraichissez pas, réessayez juste le fichier.")
+st.title("🎤 KARAKODOUIN V3.2 (Anti-Crash)")
+st.markdown("ℹ️ *Si l'upload échoue, réessayez sans rafraichir la page.*")
 
 download_font()
 
-# On utilise une clé unique pour forcer le nettoyage du cache d'upload
-audio = st.file_uploader("Musique (MP3)", type=["mp3"], key="mp3_load")
-bg = st.file_uploader("Fond (Image ou Vidéo)", type=["jpg", "png", "mp4"], key="bg_load")
+# Clés uniques pour forcer le nettoyage
+audio = st.file_uploader("1. Musique (MP3)", type=["mp3"], key="mp3_v3")
+bg = st.file_uploader("2. Fond (Image/Vidéo)", type=["jpg", "png", "mp4"], key="bg_v3")
 
 if st.button("Lancer la Vidéo 🎬") and audio and bg:
     st.info("🚀 Analyse de l'audio en cours...")
@@ -76,12 +85,11 @@ if st.button("Lancer la Vidéo 🎬") and audio and bg:
         segments = result["segments"]
         
         # Montage
-        st.info("🎨 Création des visuels...")
+        st.info("🎨 Création des visuels (Nettoyage des symboles activé)...")
         audio_c = AudioFileClip(audio_path)
         
         if is_video:
             bg_c = VideoFileClip(bg_path)
-            # Boucle vidéo
             if bg_c.duration < audio_c.duration:
                 bg_c = bg_c.loop(duration=audio_c.duration)
             else:
@@ -90,18 +98,31 @@ if st.button("Lancer la Vidéo 🎬") and audio and bg:
         else:
             bg_c = ImageClip(bg_path).set_duration(audio_c.duration)
 
-        # Redimensionnement standard (Evite les bugs de taille)
+        # Redimensionnement standard 720p
         bg_c = bg_c.resize(height=720)
         if bg_c.w % 2 != 0: bg_c = bg_c.resize(width=bg_c.w-1)
         
         subs = []
-        for s in segments:
-            img = create_karaoke_frame(s["text"].strip(), bg_c.w, bg_c.h)
-            clip = (ImageClip(img)
-                    .set_start(s["start"])
-                    .set_end(s["end"])
-                    .set_position('center'))
-            subs.append(clip)
+        # Barre de progression
+        my_bar = st.progress(0)
+        total_seg = len(segments)
+
+        for i, s in enumerate(segments):
+            # ON NETTOIE LE TEXTE ICI AVANT DE DESSINER
+            raw_text = s["text"]
+            safe_text = clean_text(raw_text)
+            
+            # Si le texte n'est pas vide après nettoyage, on crée l'image
+            if safe_text:
+                img = create_karaoke_frame(safe_text, bg_c.w, bg_c.h)
+                clip = (ImageClip(img)
+                        .set_start(s["start"])
+                        .set_end(s["end"])
+                        .set_position('center'))
+                subs.append(clip)
+            
+            # Mise à jour de la barre
+            my_bar.progress((i + 1) / total_seg)
             
         final = CompositeVideoClip([bg_c] + subs).set_audio(audio_c)
         
