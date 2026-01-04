@@ -3,3 +3,4 @@ openai-whisper
 moviepy==1.0.3
 numpy
 ffmpeg-python
+Pillow==9.5.0
